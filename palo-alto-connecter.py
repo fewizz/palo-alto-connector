@@ -1,4 +1,6 @@
 import requests
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import json
 import hashlib
 
@@ -42,14 +44,14 @@ with requests.Session() as s:
 			"challengePws": "",
 			"ok": "Log In"
 		},
-		verify=False
+		verify = False
 	)
 
 	save_response(auth_response, "auth.html")
 
 	open_response = s.get(
 		f"https://{dev.web_interface_ip}/?",
-		verify=False
+		verify = False
 	)
 	save_response(open_response, "open.txt")
 
@@ -59,27 +61,58 @@ with requests.Session() as s:
 	st_ending = open_response.text.find("\"", st_beginning)
 
 	cookie = open_response.text[st_beginning:st_ending]
-	tid = 2
 
 	export_response = s.post(
 		f"https://{dev.web_interface_ip}/php/device/export.dynamic_config.php",
-		verify=False,
-		stream=True
+		verify = False,
+		stream = True
 	)
 
 	save_response(export_response, "exported.tgz")
 
+	def get_next_tid_and_token():
+		if not hasattr(get_next_tid_and_token, "tid"):
+			get_next_tid_and_token.tid = 1
+		get_next_tid_and_token.tid += 1
+		tid = get_next_tid_and_token.tid
+		token = hashlib.md5((cookie + str(tid)).encode("ascii")).digest().hex()
+		return tid, token
+
+	tid, token = get_next_tid_and_token()
+
 	import_response = s.post(
 		f"https://{dev.web_interface_ip}/php/device/config.upload.php",
-		data={
-			"___tid": str(tid),
-			"___token": hashlib.md5((cookie + str(tid)).encode("ascii")).digest().hex(),
+		data = {
+			"___tid": tid,
+			"___token": token,
 			"configType": "dynamic"
 		},
-		files={
+		files = {
 			"file_upload": open("exported.tgz", "rb")
 		}
 	)
 
 	print(import_response.text)
 
+	tid, token = get_next_tid_and_token()
+
+	commit_response = s.post(
+		f"https://{dev.web_interface_ip}/php/utils/router.php/CommitDirect.commit",
+		data = json.dumps({
+			"action": "PanDirect",
+			"method": "run",
+			"data": [
+				token,
+				"CommitDirect.commit",
+				[[{
+					"operationType": "operation-type-all",
+					"actionName": "Commit",
+					"isFullCommit": True
+				}]]
+			],
+			"tid": tid,
+			"type": "rpc"
+		})
+	)
+
+	print(commit_response)
