@@ -3,32 +3,57 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import json
 
-management_address = "https://10.1.103.80"
-pan_os_version = "9.0"
-api_key = "LUFRPT1WS0FqaDliZC9qUHRqdzRkYmh6SjhBUXVRTFk9M0NCZkhWTFhSK3lmaTk4SEc3bXE0WTVzVkF4cVh2dFdQMlg4S2ZVdkZFYz0="
 fwmt_address = "http://127.0.0.1:8000/"
-product_id = 1
+
+product_name, configuration_name = "Super-Puper FW", "SomeConfiguration"
+
+product_response = requests.get(
+	f"{fwmt_address}/product/{product_name}"
+)
+if product_response.text == "Error":
+	raise RuntimeError(f"couldn't fetch product by name \"{product_name}\"")
+
+product = json.loads(product_response.text)[0]
+product_id = product["id"]
+
+pan_ip = product["host_ip"]
+pan_port = product["host_port"]
+pan_address = pan_ip + (pan_port if pan_port != None else "")
+pan_version = product["version"]
+pan_key = product["uid"]
+
+pan_headers = { "X-PAN-KEY": pan_key }
+pan_params = {
+	"location": "vsys",
+	"vsys": "vsys1"
+}
 
 # objects
 
 response = requests.get(
-	f"{management_address}/restapi/{pan_os_version}/Objects/Addresses",
-	verify=False,
-	headers = { "X-PAN-KEY": api_key },
-	params = {
-		"location": "vsys",
-		"vsys": "vsys1"
-	}
+	f"{pan_address}/restapi/{pan_version}/Objects/Addresses",
+	verify = False,
+	headers = pan_headers,
+	params = pan_params
 )
-if response.status_code != 200: raise RuntimeError("couldn't query objects")
+if response.status_code != 200: raise RuntimeError("couldn't fetch objects")
 
+# Maps object ID in DB to object name if FW
 object_id_by_name = dict()
+objects_ids = []
 
-any_object_response = requests.get(f"{fwmt_address}/object/any")
-if any_object_response.text == "Error":
-	raise RuntimeError("any object is not defined in DB?")
+def add_object(fw_name, db_id):
+	object_id_by_name[fw_name] = db_id
+	objects_ids.append(db_id)
 
-object_id_by_name["any"] = int(json.loads(any_object_response.text)[0]["id"])
+def add_any_object():
+	any_object_response = requests.get(f"{fwmt_address}/object/Any")
+	if any_object_response.text == "Error":
+		raise RuntimeError("\"Any\" object is not defined in DB?")
+	any_object = json.loads(any_object_response.text)[0]
+	add_object("any", int(any_object["id"]))
+
+add_any_object()
 
 for e in json.loads(response.text)["result"]["entry"]:
 	name = e["@name"]
@@ -38,10 +63,10 @@ for e in json.loads(response.text)["result"]["entry"]:
 		"product": product_id
 	}
 
-	def try_add(name):
-		if name not in e: return False
-		params["object_type"] = name
-		params["object_value"]  = e[name]
+	def try_add(type_name):
+		if type_name not in e: return False
+		params["object_type"] = type_name
+		params["object_value"] = e[type_name]
 		return True
 
 	if (
@@ -50,30 +75,27 @@ for e in json.loads(response.text)["result"]["entry"]:
 		not try_add("ip-wildcard")
 	): raise RuntimeError(f"couldn't add object named \"{name}\"")
 
-	result = requests.post(
+	response = requests.post(
 		f"{fwmt_address}/object/add",
 		json = params
 	)
-	if result.text == "Error":
+	if response.text == "Error":
 		raise RuntimeError(f"couldn't add object named \"{name}\"")
 
-	object_id = int(result.text)
-	object_id_by_name[name] = object_id
+	id = int(response.text)
+	add_object(name, id)
 
 # security rules
 
 response = requests.get(
-	f"{management_address}/restapi/{pan_os_version}/Policies/SecurityRules",
-	verify=False,
-	headers = { "X-PAN-KEY": api_key },
-	params = {
-		"location": "vsys",
-		"vsys": "vsys1"
-	}
+	f"{pan_address}/restapi/{pan_version}/Policies/SecurityRules",
+	verify = False,
+	headers = pan_headers,
+	params = pan_params
 )
 
 if response.status_code != 200:
-	raise RuntimeError("couldn't query security rules")
+	raise RuntimeError("couldn't fetch security rules")
 
 security_rules_ids = []
 position = 0
@@ -113,29 +135,26 @@ for e in json.loads(response.text)["result"]["entry"]:
 		"feature3": e["log-setting"] if "log-setting" in e else "",
 	}
 
-	result = requests.post(
+	response = requests.post(
 		f"{fwmt_address}/sec_rule/add",
 		json = params
 	)
-	if result.text == "Error":
+	if response.text == "Error":
 		raise RuntimeError(f"couldn't add security rule named \"{name}\"")
 
-	security_rules_ids.append(int(result.text))
+	security_rules_ids.append(int(response.text))
 
 
 # NAT rules
 
 response = requests.get(
-	f"{management_address}/restapi/{pan_os_version}/Policies/NatRules",
-	verify=False,
-	headers = { "X-PAN-KEY": api_key },
-	params = {
-		"location": "vsys",
-		"vsys": "vsys1"
-	}
+	f"{pan_address}/restapi/{pan_version}/Policies/NatRules",
+	verify = False,
+	headers = pan_headers,
+	params = pan_params
 )
 
-if response.status_code != 200: raise RuntimeError("couldn't query nat rules")
+if response.status_code != 200: raise RuntimeError("couldn't fetch nat rules")
 
 nat_rules_ids = []
 position = 0
@@ -148,7 +167,7 @@ for e in json.loads(response.text)["result"]["entry"]:
 		"position": position,
 		"name": name,
 		"description": e["description"] if "description" in e else "",
-		"original_src_ip": object_id_by_name[e["source"]["member"][0]],
+		"orignal_src_ip": object_id_by_name[e["source"]["member"][0]],
 		"original_dst_ip": object_id_by_name[e["destination"]["member"][0]],
 		"original_port": "",
 		"translated_src_ip": object_id_by_name[e["source"]["member"][0]],
@@ -156,11 +175,27 @@ for e in json.loads(response.text)["result"]["entry"]:
 		"translated_dst_port": "",
 	}
 
-	result = requests.post(
+	response = requests.post(
 		f"{fwmt_address}/nat_rule/add",
 		json = params
 	)
-	if(result.text == "Error"):
+	if response.text == "Error":
 		raise RuntimeError(f"couldn't add nat rule named \"{name}\"")
 
-	nat_rules_ids.append(int(result.text))
+	nat_rules_ids.append(int(response.text))
+
+response = requests.post(
+	f"{fwmt_address}/config/add",
+	json = {
+		"name": configuration_name,
+		"product": product_id,
+		"security_rules": security_rules_ids,
+		"nat_rules": nat_rules_ids,
+		"fw_objects": objects_ids
+	}
+)
+
+if response.text == "Error":
+	raise RuntimeError(
+		f"couldn't add configuration named \"{configuration_name}\""
+	)
