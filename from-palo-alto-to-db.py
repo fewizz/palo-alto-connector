@@ -1,35 +1,9 @@
-import requests
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-import json
+from palo_alto_common import *
 
-fwmt_address = "http://127.0.0.1:8000/"
-
-product_name, configuration_name = "Super-Puper FW", "SomeConfiguration"
-
-product_response = requests.get(
-	f"{fwmt_address}/product/{product_name}"
-)
-if product_response.text == "Error":
-	raise RuntimeError(f"couldn't fetch product by name \"{product_name}\"")
-
-product = json.loads(product_response.text)[0]
-product_id = product["id"]
-
-pan_ip = product["host_ip"]
-pan_port = product["host_port"]
-pan_address = pan_ip + (pan_port if pan_port != None else "")
-pan_version = product["version"]
-pan_key = product["uid"]
-
-pan_headers = { "X-PAN-KEY": pan_key }
-pan_params = {
-	"location": "vsys",
-	"vsys": "vsys1"
-}
 
 # objects
 
+print("fetching objects from PAN... ", end = "")
 response = requests.get(
 	f"{pan_address}/restapi/{pan_version}/Objects/Addresses",
 	verify = False,
@@ -37,8 +11,9 @@ response = requests.get(
 	params = pan_params
 )
 if response.status_code != 200: raise RuntimeError("couldn't fetch objects")
+print("success")
 
-# Maps object ID in DB to object name if FW
+# maps object ID in DB to object name if FW
 object_id_by_name = dict()
 objects_ids = []
 
@@ -48,12 +23,15 @@ def add_object(fw_name, db_id):
 
 def add_any_object():
 	any_object_response = requests.get(f"{fwmt_address}/object/Any")
-	if any_object_response.text == "Error":
-		raise RuntimeError("\"Any\" object is not defined in DB?")
+	if any_object_response.text == "Error": raise RuntimeError(
+		"\"Any\" object is not defined in DB?"
+	)
 	any_object = json.loads(any_object_response.text)[0]
 	add_object("any", int(any_object["id"]))
 
+print("fetching \"Any\" object from DB... ", end = "")
 add_any_object()
+print("success")
 
 for e in json.loads(response.text)["result"]["entry"]:
 	name = e["@name"]
@@ -75,27 +53,32 @@ for e in json.loads(response.text)["result"]["entry"]:
 		not try_add("ip-wildcard")
 	): raise RuntimeError(f"couldn't add object named \"{name}\"")
 
+	print(f"adding object named \"{name}\" to DB... ", end = "")
 	response = requests.post(
 		f"{fwmt_address}/object/add",
 		json = params
 	)
-	if response.text == "Error":
-		raise RuntimeError(f"couldn't add object named \"{name}\"")
+	if response.text == "Error": raise RuntimeError(
+		f"couldn't add object named \"{name}\""
+	)
+	print("success")
 
 	id = int(response.text)
 	add_object(name, id)
 
 # security rules
 
+print("fetching security rules from PAN... ", end = "")
 response = requests.get(
 	f"{pan_address}/restapi/{pan_version}/Policies/SecurityRules",
 	verify = False,
 	headers = pan_headers,
 	params = pan_params
 )
-
-if response.status_code != 200:
-	raise RuntimeError("couldn't fetch security rules")
+if response.status_code != 200: raise RuntimeError(
+	"couldn't fetch security rules"
+)
+print("success")
 
 security_rules_ids = []
 position = 0
@@ -135,26 +118,32 @@ for e in json.loads(response.text)["result"]["entry"]:
 		"feature3": e["log-setting"] if "log-setting" in e else "",
 	}
 
+	print(f"adding security rule named \"{name}\" to DB... ", end = "")
 	response = requests.post(
 		f"{fwmt_address}/sec_rule/add",
 		json = params
 	)
-	if response.text == "Error":
-		raise RuntimeError(f"couldn't add security rule named \"{name}\"")
+	if response.text == "Error": raise RuntimeError(
+		f"couldn't add security rule named \"{name}\""
+	)
+	print("success")
 
 	security_rules_ids.append(int(response.text))
 
 
 # NAT rules
 
+print("fetching NAT rules from PAN... ", end = "")
 response = requests.get(
 	f"{pan_address}/restapi/{pan_version}/Policies/NatRules",
 	verify = False,
 	headers = pan_headers,
 	params = pan_params
 )
-
-if response.status_code != 200: raise RuntimeError("couldn't fetch nat rules")
+if response.status_code != 200: raise RuntimeError(
+	"couldn't fetch NAT rules"
+)
+print("success")
 
 nat_rules_ids = []
 position = 0
@@ -175,15 +164,24 @@ for e in json.loads(response.text)["result"]["entry"]:
 		"translated_dst_port": "",
 	}
 
+	print(f"adding NAT rule named \"{name}\" to DB... ", end = "")
 	response = requests.post(
 		f"{fwmt_address}/nat_rule/add",
 		json = params
 	)
-	if response.text == "Error":
-		raise RuntimeError(f"couldn't add nat rule named \"{name}\"")
+	if response.text == "Error": raise RuntimeError(
+		f"couldn't add nat rule named \"{name}\""
+	)
+	print("success")
 
 	nat_rules_ids.append(int(response.text))
 
+
+# configuration
+
+print(
+	f"adding configuration named \"{configuration_name}\" to DB... ", end = ""
+)
 response = requests.post(
 	f"{fwmt_address}/config/add",
 	json = {
@@ -194,8 +192,7 @@ response = requests.post(
 		"fw_objects": objects_ids
 	}
 )
-
-if response.text == "Error":
-	raise RuntimeError(
-		f"couldn't add configuration named \"{configuration_name}\""
-	)
+if response.text == "Error": raise RuntimeError(
+	f"couldn't add configuration named \"{configuration_name}\""
+)
+print("success")
