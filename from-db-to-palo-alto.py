@@ -22,5 +22,25 @@ print("success")
 security_rules_ids = configuration["security_rules"]
 nat_rules_ids = configuration["nat_rules"]
 
-#objects_ids = configuration["fw_objects"]
+# objects
+pan_addresses = pan_fetch_addresses()
 
+# security rules
+pan_security_rules = pan_fetch_scurity_rules()
+
+for security_rule_id in security_rules_ids:
+	response = requests.get(
+		f"{fwmt_address}/sec_rule/id/{security_rule_id}"
+	)
+	if response.text == "Error": raise RuntimeError(
+		f"couldn't fetch security rule with id \"{security_rule_id}\" from DB"
+	)
+	security_rule = json.loads(response.text)[0]
+	name = security_rule["name"]
+
+	pan_security_rule = next(
+		filter(lambda sr: sr["@name"] == name, pan_security_rules),
+		None
+	)
+
+	data = pan_security_rule if pan_security_rule != None else {}

@@ -31,3 +31,46 @@ pan_params = {
 	"location": "vsys",
 	"vsys": "vsys1"
 }
+
+
+def pan_fetch_addresses():
+	print("fetching addresses from PAN... ", end = "")
+	response = requests.get(
+		f"{pan_address}/restapi/{pan_version}/Objects/Addresses",
+		verify = False,
+		headers = pan_headers,
+		params = pan_params
+	)
+	if response.status_code != 200: raise RuntimeError(
+		"couldn't fetch addresses"
+	)
+	print("success")
+	return json.loads(response.text)["result"]["entry"]
+
+def pan_fetch_scurity_rules():
+	print("fetching security rules from PAN... ", end = "")
+	response = requests.get(
+		f"{pan_address}/restapi/{pan_version}/Policies/SecurityRules",
+		verify = False,
+		headers = pan_headers,
+		params = pan_params
+	)
+	if response.status_code != 200: raise RuntimeError(
+		"couldn't fetch security rules"
+	)
+	print("success")
+	return json.loads(response.text)["result"]["entry"]
+
+def pan_fetch_nat_rules():
+	print("fetching NAT rules from PAN... ", end = "")
+	response = requests.get(
+		f"{pan_address}/restapi/{pan_version}/Policies/NatRules",
+		verify = False,
+		headers = pan_headers,
+		params = pan_params
+	)
+	if response.status_code != 200: raise RuntimeError(
+		"couldn't fetch NAT rules"
+	)
+	print("success")
+	return json.loads(response.text)["result"]["entry"]

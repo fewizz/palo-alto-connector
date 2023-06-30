@@ -3,16 +3,6 @@ from palo_alto_common import *
 
 # objects
 
-print("fetching objects from PAN... ", end = "")
-response = requests.get(
-	f"{pan_address}/restapi/{pan_version}/Objects/Addresses",
-	verify = False,
-	headers = pan_headers,
-	params = pan_params
-)
-if response.status_code != 200: raise RuntimeError("couldn't fetch objects")
-print("success")
-
 # maps object ID in DB to object name if FW
 object_id_by_name = dict()
 objects_ids = []
@@ -33,7 +23,9 @@ print("fetching \"Any\" object from DB... ", end = "")
 add_any_object()
 print("success")
 
-for e in json.loads(response.text)["result"]["entry"]:
+pan_addresses = pan_fetch_addresses()
+
+for e in pan_addresses:
 	name = e["@name"]
 
 	params = {
@@ -68,22 +60,12 @@ for e in json.loads(response.text)["result"]["entry"]:
 
 # security rules
 
-print("fetching security rules from PAN... ", end = "")
-response = requests.get(
-	f"{pan_address}/restapi/{pan_version}/Policies/SecurityRules",
-	verify = False,
-	headers = pan_headers,
-	params = pan_params
-)
-if response.status_code != 200: raise RuntimeError(
-	"couldn't fetch security rules"
-)
-print("success")
-
 security_rules_ids = []
 position = 0
 
-for e in json.loads(response.text)["result"]["entry"]:
+security_rules = pan_fetch_scurity_rules()
+
+for e in security_rules:
 	position += 1
 	name = e["@name"]
 	params = {
@@ -133,36 +115,81 @@ for e in json.loads(response.text)["result"]["entry"]:
 
 # NAT rules
 
-print("fetching NAT rules from PAN... ", end = "")
-response = requests.get(
-	f"{pan_address}/restapi/{pan_version}/Policies/NatRules",
-	verify = False,
-	headers = pan_headers,
-	params = pan_params
-)
-if response.status_code != 200: raise RuntimeError(
-	"couldn't fetch NAT rules"
-)
-print("success")
-
 nat_rules_ids = []
 position = 0
 
-for e in json.loads(response.text)["result"]["entry"]:
+nat_rules = pan_fetch_nat_rules()
+
+for e in nat_rules:
 	position += 1
 	name = e["@name"]
+
+	# check if "from" and "to" zones set to "any"
+	if e["from"]["member"][0] != "any" or e["to"]["member"][0] != "any":
+		print("NAT zones aren't supported by FWMT")
+
 	params = {
 		"product": product_id,
 		"position": position,
 		"name": name,
 		"description": e["description"] if "description" in e else "",
+		# TODO "orignal" - typo in FWMT
 		"orignal_src_ip": object_id_by_name[e["source"]["member"][0]],
 		"original_dst_ip": object_id_by_name[e["destination"]["member"][0]],
-		"original_port": "",
-		"translated_src_ip": object_id_by_name[e["source"]["member"][0]],
-		"translated_dst_ip": object_id_by_name[e["destination"]["member"][0]],
-		"translated_dst_port": "",
+		"original_port": ""
 	}
+
+	source_translation_type = list(e["source-translation"].keys())[0]
+	source_translation = e["source-translation"][source_translation_type]
+	translated_object_type = list(source_translation.keys())[0]
+	translated_object = source_translation[translated_object_type]
+
+	def translated_addresses():
+		translated_addresses = translated_object["member"]
+		translated_addresses_count = len(translated_addresses)
+		if translated_addresses_count > 1: raise RuntimeError(
+			f"FWMT doesn't support multiple \
+			({translated_addresses_count}) translation addresses"
+		)
+		address_name = translated_addresses[0]
+		params["translated_src_ip"] = object_id_by_name[address_name]
+
+	match source_translation_type:
+		case "dynamic-ip-and-port":
+			match translated_object_type:
+				case "interface-address":
+					raise RuntimeError(
+						"interface source translation is not supported yet"
+					)
+				case "translated-address":
+					translated_addresses()
+		case "dynamic-ip":
+			match translated_object_type:
+				case "translated-address":
+					translated_addresses()
+				case "fallback":
+					raise RuntimeError("isn't supported")
+		case "static-ip":
+			params["translated_src_ip"] = translated_object[
+				"translated-address"
+			]
+			if "bi-directional" in translated_object:
+				raise RuntimeError("don't know what to do with it yet xD")
+		case _:
+			raise RuntimeError(
+				f"no source translation for nat rule named \"{name}\""
+			)
+
+	# "Only one of
+	#  *destination-translation* or
+	#  *dynamic-destination-translation* must be presented."
+	if "destination-translation" in e:
+		params["translated_dst_ip"] \
+			= e["destination-translation"]["translated-address"]
+		params["translated_dst_port"] \
+			= e["destination-translation"]["translated-port"]
+	elif "dynamic-destination-translation" in e:
+		raise RuntimeError("dont' understand it yed :|")
 
 	print(f"adding NAT rule named \"{name}\" to DB... ", end = "")
 	response = requests.post(
