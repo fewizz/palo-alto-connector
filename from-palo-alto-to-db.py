@@ -65,11 +65,14 @@ for e in pan_fetch_security_rules():
 	position += 1
 	name = e["@name"]
 
-	if e["application"]["member"] != "any":
+	if e["application"]["member"][0] != "any":
 		raise RuntimeError("applications aren't supported yet")
 
-	if e["service"]["member"] != "any":
-		raise RuntimeError("services aren't supported yet")
+	services = e["service"]["member"]
+	services_count = len(services)
+	if services_count > 1: raise RuntimeError(
+		f"multiple services ({services_count}) aren't supported yet"
+	)
 
 	params = {
 		"product": product_id,
@@ -87,9 +90,15 @@ for e in pan_fetch_security_rules():
 			object_id_by_name[member_name]
 			for member_name in e["destination"]["member"]
 		],
-		# "dst_port": [], # ?
-		"protocol": object_id_by_name[e["service"]["member"]],
-		"application": object_id_by_name[e["application"]["member"]],
+		"dst_port": [object_id_by_name["any"]], #TODO
+		"protocol": {
+			"service-http" : "http",
+			"service-https" : "https",
+		}.get(
+			services[0],
+			"" # default
+		),
+		"application": [ object_id_by_name[e["application"]["member"][0]] ],
 		"action": {
 			"deny": "REJECT",
 			"allow": "ACCEPT",
