@@ -47,7 +47,7 @@ def pan_fetch_addresses():
 	print("success")
 	return json.loads(response.text)["result"]["entry"]
 
-def pan_fetch_scurity_rules():
+def pan_fetch_security_rules():
 	print("fetching security rules from PAN... ", end = "")
 	response = requests.get(
 		f"{pan_address}/restapi/{pan_version}/Policies/SecurityRules",

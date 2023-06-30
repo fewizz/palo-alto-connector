@@ -26,7 +26,7 @@ nat_rules_ids = configuration["nat_rules"]
 pan_addresses = pan_fetch_addresses()
 
 # security rules
-pan_security_rules = pan_fetch_scurity_rules()
+pan_security_rules = pan_fetch_security_rules()
 
 for security_rule_id in security_rules_ids:
 	response = requests.get(

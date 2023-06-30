@@ -23,9 +23,7 @@ print("fetching \"Any\" object from DB... ", end = "")
 add_any_object()
 print("success")
 
-pan_addresses = pan_fetch_addresses()
-
-for e in pan_addresses:
+for e in pan_fetch_addresses():
 	name = e["@name"]
 
 	params = {
@@ -63,11 +61,16 @@ for e in pan_addresses:
 security_rules_ids = []
 position = 0
 
-security_rules = pan_fetch_scurity_rules()
-
-for e in security_rules:
+for e in pan_fetch_security_rules():
 	position += 1
 	name = e["@name"]
+
+	if e["application"]["member"] != "any":
+		raise RuntimeError("applications aren't supported yet")
+
+	if e["service"]["member"] != "any":
+		raise RuntimeError("services aren't supported yet")
+
 	params = {
 		"product": product_id,
 		"position": position,
@@ -85,12 +88,13 @@ for e in security_rules:
 			for member_name in e["destination"]["member"]
 		],
 		# "dst_port": [], # ?
-		# "protocol": ?
-		# "application": [], # ?
+		"protocol": object_id_by_name[e["service"]["member"]],
+		"application": object_id_by_name[e["application"]["member"]],
 		"action": {
 			"deny": "REJECT",
 			"allow": "ACCEPT",
 			"drop": "DROP"
+			# TODO "reset-client", "reset-server", "reset-both"?
 		} [e["action"]],
 		"logging":
 			("log-start" in e and e["log-start"] == "yes") or
@@ -118,9 +122,7 @@ for e in security_rules:
 nat_rules_ids = []
 position = 0
 
-nat_rules = pan_fetch_nat_rules()
-
-for e in nat_rules:
+for e in pan_fetch_nat_rules():
 	position += 1
 	name = e["@name"]
 
