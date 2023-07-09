@@ -22,7 +22,7 @@ product_id = product["id"]
 
 pan_ip = product["host_ip"]
 pan_port = product["host_port"]
-pan_address = pan_ip + (pan_port if pan_port != None else "")
+pan_address = "https://" + pan_ip + (pan_port if pan_port != None else "")
 pan_version = product["version"]
 pan_key = product["uid"]
 

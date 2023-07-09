@@ -1,40 +1,56 @@
 from palo_alto_common import *
 
-
 # objects
 
 # maps object ID in DB to object name if FW
-object_id_by_name = dict()
-objects_ids = []
+object_db_id_by_fw_name = dict()
+objects_db_ids = []
 
-def add_object(fw_name, db_id):
-	object_id_by_name[fw_name] = db_id
-	objects_ids.append(db_id)
+def add_object_to_the_dict(fw_name, db_id):
+	object_db_id_by_fw_name[fw_name] = db_id
+	objects_db_ids.append(db_id)
 
-def add_any_object():
+def fetch_and_add_any_object_to_the_dict():
 	any_object_response = requests.get(f"{fwmt_address}/object/Any")
-	if any_object_response.text == "Error": raise RuntimeError(
-		"\"Any\" object is not defined in DB?"
+	jsn = json.loads(any_object_response.text)
+	if any_object_response.text == "Error" or len(jsn) == 0: raise RuntimeError(
+		"\"Any\" object is not defined in a DB?"
 	)
-	any_object = json.loads(any_object_response.text)[0]
-	add_object("any", int(any_object["id"]))
+	any_object = jsn[0]
+	add_object_to_the_dict("any", int(any_object["id"]))
 
 print("fetching \"Any\" object from DB... ", end = "")
-add_any_object()
+fetch_and_add_any_object_to_the_dict()
 print("success")
+
+def add_object_to_the_db(name, type, value):
+	print(f"adding object named \"{name}\" to the DB... ", end = "")
+	response = requests.post(
+		f"{fwmt_address}/object/add",
+		json = {
+			"name": name,
+			"product": product_id,
+			"object_type": type,
+			"object_value": value
+		}
+	)
+	if response.text == "Error": raise RuntimeError(
+		f"couldn't add object named \"{name}\""
+	)
+	print("success")
+	id = int(response.text)
+	add_object_to_the_dict(name, id)
 
 for e in pan_fetch_addresses():
 	name = e["@name"]
 
-	params = {
-		"name": name,
-		"product": product_id
-	}
-
 	def try_add(type_name):
 		if type_name not in e: return False
-		params["object_type"] = type_name
-		params["object_value"] = e[type_name]
+		add_object_to_the_db(
+			name = name,
+			type = type_name,
+			value = e[type_name]
+		)
 		return True
 
 	if (
@@ -43,30 +59,32 @@ for e in pan_fetch_addresses():
 		not try_add("ip-wildcard")
 	): raise RuntimeError(f"couldn't add object named \"{name}\"")
 
-	print(f"adding object named \"{name}\" to DB... ", end = "")
-	response = requests.post(
-		f"{fwmt_address}/object/add",
-		json = params
-	)
-	if response.text == "Error": raise RuntimeError(
-		f"couldn't add object named \"{name}\""
-	)
-	print("success")
-
-	id = int(response.text)
-	add_object(name, id)
-
 # security rules
 
+def possibly_add_and_get_object_db_id_by_name(name, type, value):
+	if name not in object_db_id_by_fw_name:
+		add_object_to_the_db(name, type, value)
+	return object_db_id_by_fw_name[name]
+
+def possibly_add_and_get_application_db_id_by_name(app_name):
+	return possibly_add_and_get_object_db_id_by_name(
+		name = app_name,
+		type = "application",
+		value = "Wroom Wroom"
+	)
+
+def possibly_add_and_get_zone_db_id_by_name(zone_name):
+	return possibly_add_and_get_object_db_id_by_name(
+		name = zone_name,
+		type = "zone",
+		value = ""
+	)
+
 security_rules_ids = []
-position = 0
 
 for e in pan_fetch_security_rules():
-	position += 1
+	position = len(security_rules_ids) + 1
 	name = e["@name"]
-
-	if e["application"]["member"][0] != "any":
-		raise RuntimeError("applications aren't supported yet")
 
 	services = e["service"]["member"]
 	services_count = len(services)
@@ -80,17 +98,23 @@ for e in pan_fetch_security_rules():
 		#"policy": ?
 		"name": name,
 		"description": e["descripion"] if "description" in e else "",
-		"zone_in": e["from"]["member"][0],
-		"zone_out": e["to"]["member"][0],
+		"source_zones": [
+			possibly_add_and_get_zone_db_id_by_name(zone_name)
+			for zone_name in e["from"]["member"]
+		],
+		"destination_zones": [
+			possibly_add_and_get_zone_db_id_by_name(zone_name)
+			for zone_name in e["to"]["member"]
+		],
 		"source": [
-			object_id_by_name[member_name]
-			for member_name in e["source"]["member"]
+			object_db_id_by_fw_name[object_name]
+			for object_name in e["source"]["member"]
 		],
 		"destination": [
-			object_id_by_name[member_name]
-			for member_name in e["destination"]["member"]
+			object_db_id_by_fw_name[object_name]
+			for object_name in e["destination"]["member"]
 		],
-		"dst_port": [object_id_by_name["any"]], #TODO
+		"dst_port": [object_db_id_by_fw_name["any"]], #TODO
 		"protocol": {
 			"service-http" : "http",
 			"service-https" : "https",
@@ -98,7 +122,10 @@ for e in pan_fetch_security_rules():
 			services[0],
 			"" # default
 		),
-		"application": [ object_id_by_name[e["application"]["member"][0]] ],
+		"application": [
+			possibly_add_and_get_application_db_id_by_name(app_name)
+			for app_name in e["application"]["member"]
+		],
 		"action": {
 			"deny": "REJECT",
 			"allow": "ACCEPT",
@@ -125,28 +152,34 @@ for e in pan_fetch_security_rules():
 
 	security_rules_ids.append(int(response.text))
 
-
 # NAT rules
 
 nat_rules_ids = []
-position = 0
 
 for e in pan_fetch_nat_rules():
-	position += 1
+	position = len(nat_rules_ids) + 1
 	name = e["@name"]
 
-	# check if "from" and "to" zones set to "any"
-	if e["from"]["member"][0] != "any" or e["to"]["member"][0] != "any":
-		print("NAT zones aren't supported by FWMT")
+	if len(e["to"]["member"]) > 1: raise RuntimeError(
+		"more than one destination zone?"
+	)
 
 	params = {
 		"product": product_id,
 		"position": position,
 		"name": name,
 		"description": e["description"] if "description" in e else "",
-		# TODO "orignal" - typo in FWMT
-		"orignal_src_ip": object_id_by_name[e["source"]["member"][0]],
-		"original_dst_ip": object_id_by_name[e["destination"]["member"][0]],
+		"source_zones": [
+			possibly_add_and_get_zone_db_id_by_name(zone_name)
+			for zone_name in e["from"]["member"]
+		],
+		"destination_zone": possibly_add_and_get_zone_db_id_by_name(
+			e["to"]["member"][0]
+		),
+		"orignal_src_ip":
+			object_db_id_by_fw_name[e["source"]["member"][0]],
+		"original_dst_ip":
+			object_db_id_by_fw_name[e["destination"]["member"][0]],
 		"original_port": ""
 	}
 
@@ -157,13 +190,10 @@ for e in pan_fetch_nat_rules():
 
 	def translated_addresses():
 		translated_addresses = translated_object["member"]
-		translated_addresses_count = len(translated_addresses)
-		if translated_addresses_count > 1: raise RuntimeError(
-			f"FWMT doesn't support multiple \
-			({translated_addresses_count}) translation addresses"
-		)
-		address_name = translated_addresses[0]
-		params["translated_src_ip"] = object_id_by_name[address_name]
+		params["translated_src_ip"] = [
+			object_db_id_by_fw_name[address_name]
+			for address_name in translated_addresses
+		]
 
 	match source_translation_type:
 		case "dynamic-ip-and-port":
@@ -214,7 +244,6 @@ for e in pan_fetch_nat_rules():
 
 	nat_rules_ids.append(int(response.text))
 
-
 # configuration
 
 print(
@@ -227,7 +256,7 @@ response = requests.post(
 		"product": product_id,
 		"security_rules": security_rules_ids,
 		"nat_rules": nat_rules_ids,
-		"fw_objects": objects_ids
+		"fw_objects": objects_db_ids
 	}
 )
 if response.text == "Error": raise RuntimeError(
